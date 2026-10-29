@@ -27,23 +27,40 @@ export const getAuthHeaders = (): Record<string, string> => {
   return headers;
 };
 
+async function requestRoleToken(role: UserRole, username?: string) {
+  const uname = username || (role === 'admin' ? 'Raj' : role === 'red_lead' ? 'RedLead' : role === 'blue_lead' ? 'BlueLead' : 'Somesh');
+  const query = new URLSearchParams({ role, username: uname });
+  const res = await fetch(`${API_BASE}/auth/demo-token?${query}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' }
+  });
+  if (!res.ok) throw new Error('Failed to refresh demo token');
+  const data = await res.json();
+  currentToken = data.access_token;
+  currentRole = data.role as UserRole;
+  currentUsername = data.username;
+  localStorage.setItem('bayora_token', currentToken);
+  localStorage.setItem('bayora_role', currentRole);
+  localStorage.setItem('bayora_username', currentUsername);
+  return data;
+}
+
+async function apiFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  const send = () => fetch(url, { ...init, headers: getAuthHeaders() });
+  const res = await send();
+  if (res.status !== 401) return res;
+  try {
+    await requestRoleToken(currentRole);
+  } catch {
+    return res;
+  }
+  return send();
+}
+
 export const api = {
   // Auth & Roles
   async switchRole(role: UserRole, username?: string): Promise<{ access_token: string; role: string; username: string }> {
-    const uname = username || (role === 'admin' ? 'Raj' : role === 'red_lead' ? 'RedLead' : role === 'blue_lead' ? 'BlueLead' : 'Somesh');
-    const res = await fetch(`${API_BASE}/auth/demo-token?role=${role}&username=${uname}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' }
-    });
-    if (!res.ok) throw new Error('Failed to switch role');
-    const data = await res.json();
-    currentToken = data.access_token;
-    currentRole = data.role as UserRole;
-    currentUsername = data.username;
-    localStorage.setItem('bayora_token', currentToken);
-    localStorage.setItem('bayora_role', currentRole);
-    localStorage.setItem('bayora_username', currentUsername);
-    return data;
+    return requestRoleToken(role, username);
   },
 
   getCurrentRole(): UserRole {
@@ -56,20 +73,20 @@ export const api = {
 
   // Telemetry
   async getTelemetry(): Promise<SystemTelemetry> {
-    const res = await fetch(`${API_BASE}/telemetry/system`, { headers: getAuthHeaders() });
+    const res = await apiFetch(`${API_BASE}/telemetry/system`);
     if (!res.ok) throw new Error('Failed to fetch telemetry');
     return res.json();
   },
 
   async getSideChannelStats(): Promise<any> {
-    const res = await fetch(`${API_BASE}/telemetry/side-channel`, { headers: getAuthHeaders() });
+    const res = await apiFetch(`${API_BASE}/telemetry/side-channel`);
     if (!res.ok) throw new Error('Failed to fetch side channel data');
     return res.json();
   },
 
   // Evaluations
   async getEvaluations(limit: number = 50): Promise<Evaluation[]> {
-    const res = await fetch(`${API_BASE}/evaluations/?limit=${limit}`, { headers: getAuthHeaders() });
+    const res = await apiFetch(`${API_BASE}/evaluations/?limit=${limit}`);
     if (!res.ok) throw new Error('Failed to fetch evaluations');
     return res.json();
   },
@@ -81,9 +98,8 @@ export const api = {
     severity?: string;
     bypass_blue_team?: boolean;
   }): Promise<Evaluation> {
-    const res = await fetch(`${API_BASE}/evaluations/run`, {
+    const res = await apiFetch(`${API_BASE}/evaluations/run`, {
       method: 'POST',
-      headers: getAuthHeaders(),
       body: JSON.stringify(payload)
     });
     if (!res.ok) {
@@ -100,9 +116,8 @@ export const api = {
     custom_prompt?: string;
     mutate?: boolean;
   }): Promise<LoopResult> {
-    const res = await fetch(`${API_BASE}/evaluations/continuous-loop`, {
+    const res = await apiFetch(`${API_BASE}/evaluations/continuous-loop`, {
       method: 'POST',
-      headers: getAuthHeaders(),
       body: JSON.stringify(params)
     });
     if (!res.ok) throw new Error('Continuous loop failed');
@@ -111,15 +126,14 @@ export const api = {
 
   // Red Team
   async getAttackScenarios(): Promise<AttackScenario[]> {
-    const res = await fetch(`${API_BASE}/red-team/scenarios`, { headers: getAuthHeaders() });
+    const res = await apiFetch(`${API_BASE}/red-team/scenarios`);
     if (!res.ok) throw new Error('Failed to fetch attack scenarios');
     return res.json();
   },
 
   async generateAttackPayload(params: { category: string; technique: string; mutate: boolean }): Promise<any> {
-    const res = await fetch(`${API_BASE}/red-team/generate?category=${params.category}&technique=${params.technique}&mutate=${params.mutate}`, {
-      method: 'POST',
-      headers: getAuthHeaders()
+    const res = await apiFetch(`${API_BASE}/red-team/generate?category=${params.category}&technique=${params.technique}&mutate=${params.mutate}`, {
+      method: 'POST'
     });
     if (!res.ok) throw new Error('Failed to generate attack payload');
     return res.json();
@@ -127,15 +141,14 @@ export const api = {
 
   // Blue Team
   async getDefenseRules(): Promise<DefenseRule[]> {
-    const res = await fetch(`${API_BASE}/blue-team/rules`, { headers: getAuthHeaders() });
+    const res = await apiFetch(`${API_BASE}/blue-team/rules`);
     if (!res.ok) throw new Error('Failed to fetch defense rules');
     return res.json();
   },
 
   async createDefenseRule(rule: { name: string; description?: string; category: string; pattern: string; action: string }): Promise<DefenseRule> {
-    const res = await fetch(`${API_BASE}/blue-team/rules`, {
+    const res = await apiFetch(`${API_BASE}/blue-team/rules`, {
       method: 'POST',
-      headers: getAuthHeaders(),
       body: JSON.stringify(rule)
     });
     if (!res.ok) throw new Error('Failed to create defense rule');
@@ -143,18 +156,16 @@ export const api = {
   },
 
   async toggleDefenseRule(ruleId: number): Promise<DefenseRule> {
-    const res = await fetch(`${API_BASE}/blue-team/rules/${ruleId}/toggle`, {
-      method: 'PATCH',
-      headers: getAuthHeaders()
+    const res = await apiFetch(`${API_BASE}/blue-team/rules/${ruleId}/toggle`, {
+      method: 'PATCH'
     });
     if (!res.ok) throw new Error('Failed to toggle defense rule');
     return res.json();
   },
 
   async testInputGuardrail(prompt: string): Promise<any> {
-    const res = await fetch(`${API_BASE}/blue-team/test-input?prompt=${encodeURIComponent(prompt)}`, {
-      method: 'POST',
-      headers: getAuthHeaders()
+    const res = await apiFetch(`${API_BASE}/blue-team/test-input?prompt=${encodeURIComponent(prompt)}`, {
+      method: 'POST'
     });
     if (!res.ok) throw new Error('Failed to test input guardrail');
     return res.json();
@@ -162,24 +173,22 @@ export const api = {
 
   // Audit Chain & Cryptographic Verification
   async getAuditBlocks(): Promise<AuditBlock[]> {
-    const res = await fetch(`${API_BASE}/audit/blocks`, { headers: getAuthHeaders() });
+    const res = await apiFetch(`${API_BASE}/audit/blocks`);
     if (!res.ok) throw new Error('Failed to fetch audit blocks');
     return res.json();
   },
 
   async verifyAuditChain(): Promise<AuditVerificationResult> {
-    const res = await fetch(`${API_BASE}/audit/verify`, {
-      method: 'POST',
-      headers: getAuthHeaders()
+    const res = await apiFetch(`${API_BASE}/audit/verify`, {
+      method: 'POST'
     });
     if (!res.ok) throw new Error('Verification request failed');
     return res.json();
   },
 
   async simulateTamper(blockIndex: number, tamperedPayload: string): Promise<any> {
-    const res = await fetch(`${API_BASE}/audit/tamper-simulate`, {
+    const res = await apiFetch(`${API_BASE}/audit/tamper-simulate`, {
       method: 'POST',
-      headers: getAuthHeaders(),
       body: JSON.stringify({ block_index: blockIndex, tampered_payload: tamperedPayload })
     });
     if (!res.ok) throw new Error('Failed to simulate tamper');
@@ -187,9 +196,8 @@ export const api = {
   },
 
   async restoreAuditChain(): Promise<any> {
-    const res = await fetch(`${API_BASE}/audit/restore`, {
-      method: 'POST',
-      headers: getAuthHeaders()
+    const res = await apiFetch(`${API_BASE}/audit/restore`, {
+      method: 'POST'
     });
     if (!res.ok) throw new Error('Failed to restore chain');
     return res.json();
@@ -197,15 +205,14 @@ export const api = {
 
   // Policies & OPA
   async getPolicies(): Promise<SecurityPolicy[]> {
-    const res = await fetch(`${API_BASE}/policies/`, { headers: getAuthHeaders() });
+    const res = await apiFetch(`${API_BASE}/policies/`);
     if (!res.ok) throw new Error('Failed to fetch policies');
     return res.json();
   },
 
   async evaluatePolicy(source: string, target: string, action: string, mediated: boolean = false): Promise<any> {
-    const res = await fetch(`${API_BASE}/policies/evaluate`, {
+    const res = await apiFetch(`${API_BASE}/policies/evaluate`, {
       method: 'POST',
-      headers: getAuthHeaders(),
       body: JSON.stringify({
         source,
         target,
